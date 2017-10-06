@@ -1,0 +1,5 @@
+microspringboot1:
+server:
+  tomcat:
+    max-threads: 10
+  port: 8080
