@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<beans xmlns="http://www.springframework.org/schema/beans"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xmlns:int="http://www.springframework.org/schema/integration"
+	xmlns:oxm="http://www.springframework.org/schema/oxm"
+	xmlns:int-amqp="http://www.springframework.org/schema/integration/amqp"
+	xmlns:int-http="http://www.springframework.org/schema/integration/http"
+	xmlns:file="http://www.springframework.org/schema/integration/file"
+	xmlns:feed="http://www.springframework.org/schema/integration/feed"
+	xmlns:rabbit="http://www.springframework.org/schema/rabbit"
+	xsi:schemaLocation="http://www.springframework.org/schema/integration/feed http://www.springframework.org/schema/integration/feed/spring-integration-feed.xsd
+		http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans.xsd
+		http://www.springframework.org/schema/integration/file http://www.springframework.org/schema/integration/file/spring-integration-file.xsd
+		http://www.springframework.org/schema/integration http://www.springframework.org/schema/integration/spring-integration.xsd
+		http://www.springframework.org/schema/integration/amqp http://www.springframework.org/schema/integration/amqp/spring-integration-amqp.xsd
+		http://www.springframework.org/schema/rabbit http://www.springframework.org/schema/rabbit/spring-rabbit.xsd
+		http://www.springframework.org/schema/integration/http http://www.springframework.org/schema/integration/http/spring-integration-http.xsd
+		http://www.springframework.org/schema/oxm http://www.springframework.org/schema/oxm/spring-oxm.xsd">
+
+	<!-- KC: Start
+			this project runs as follows
+			1. amqp inbound-channel-adapter picks up message from q.adapter.inbound
+			2. sends message to transformer invoking com.integrella.microservices.transformer.TransformMessage.transform()
+			3. amqp outbound-channel-adapter sends message to exchange: poc.ipaas.exchange, queue: q.mdm.esb
+			
+			NB1: wiretap defined on channels to log payloads passing through
+			NB2: INFRASTRUCTURE section below contains details to connect to RabbitMQ			
+
+		KC: End -->
+
+	<int:wire-tap channel="logger" pattern="inboundMessages,outboundMessages"/>
+	<int:logging-channel-adapter id="logger" log-full-message="true" level="DEBUG"/>
+    
+    <!--  To receive AMQP Messages from a Queue, configure an inbound-channel-adapter  -->
+    <int:inbound-channel-adapter channel="requests" expression="''">
+		<int:poller fixed-delay="30000"></int:poller>
+	</int:inbound-channel-adapter>
+    
+    <int:channel id="requests"/>
+    
+	<int-http:outbound-gateway
+		id="example"
+		url="http://services.odata.org/V4/Northwind/Northwind.svc/Orders"
+		request-channel="requests"
+		http-method="GET"
+		extract-request-payload="false"
+		expected-response-type="java.lang.String"
+		charset="UTF-8"
+		request-factory="requestFactory"
+		reply-timeout="20000"
+		reply-channel="inboundMessages"/>
+
+	<int:channel id="inboundMessages"/>
+      
+    <int:channel id="outboundMessages"/>
+    
+    
+    <!-- Here is the configuration to write conversion classes... -->
+	
+	<int:transformer 
+		id="transformMessage" 
+		ref="transformer" 
+		input-channel="inboundMessages"
+		output-channel="outboundMessages"
+		method="transform" 
+	/>
+
+	<bean id="transformer" class="com.integrella.microservices.transformer.TransformMessage" />
+ 		
+
+ 	<int-amqp:outbound-channel-adapter 
+ 		id="outbound"
+ 		channel="outboundMessages"
+        exchange-name="poc.ipaas.exchange"
+        routing-key="ipaas"
+        amqp-template="rabbitTemplate"/>
+        
+        
+    <!-- INFRASTRUCTURE --> 
+	<bean id="requestFactory" class="org.springframework.http.client.SimpleClientHttpRequestFactory">
+		<property name="connectTimeout" value="5000"/>
+		<property name="readTimeout" value="5000"/>
+	</bean>
+    
+    <rabbit:connection-factory id="rabbitConnectionFactory" host="localhost" />
+
+	<rabbit:template id="rabbitTemplate" connection-factory="rabbitConnectionFactory" />
+
+	<rabbit:admin connection-factory="rabbitConnectionFactory" />
+
+	<rabbit:queue name="queDynamics365toIPaaS"/>
+
+	<rabbit:direct-exchange name="poc.ipaas.exchange">
+		<rabbit:bindings>
+			<rabbit:binding queue="queDynamics365toIPaaS" key="ipaas" />
+		</rabbit:bindings>
+	</rabbit:direct-exchange>
+
+</beans>
